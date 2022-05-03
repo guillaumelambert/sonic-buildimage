@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 ## This script is to automate the preparation for a debian file system, which will be used for
 ## an ONIE installer image.
 ##
@@ -9,6 +9,14 @@
 ##          The name of the default admin user
 ##   PASSWORD
 ##          The password, expected by chpasswd command
+
+pkg_install_in_chroot ()
+{
+    chroot_path=$1
+    pkg_to_install=$2
+    sudo LANG=C chroot $chroot_path /bin/sh -c "DEBIAN_FRONTEND=noninteractive apt-get -qq -y install $pkg_to_install"
+}
+
 
 ## Default user
 [ -n "$USERNAME" ] || {
@@ -38,7 +46,7 @@ LINUX_KERNEL_VERSION=5.10.0-8-2
 FILESYSTEM_ROOT=./fsroot
 PLATFORM_DIR=platform
 ## Hostname for the linux image
-HOSTNAME=sonic
+HOST_NAME=sonic
 DEFAULT_USERINFO="Default admin user,,,"
 BUILD_TOOL_PATH=src/sonic-build-hooks/buildinfo
 TRUSTED_GPG_DIR=$BUILD_TOOL_PATH/trusted.gpg.d
@@ -59,7 +67,7 @@ TRUSTED_GPG_DIR=$BUILD_TOOL_PATH/trusted.gpg.d
 }
 
 ## Prepare the file system directory
-if [[ -d $FILESYSTEM_ROOT ]]; then
+if [ -d $FILESYSTEM_ROOT ]; then
     sudo rm -rf $FILESYSTEM_ROOT || die "Failed to clean chroot directory"
 fi
 mkdir -p $FILESYSTEM_ROOT
@@ -71,9 +79,10 @@ touch $FILESYSTEM_ROOT/$PLATFORM_DIR/firsttime
 sudo mount proc /proc -t proc || true
 
 ## make / as a mountpoint in chroot env, needed by dockerd
-pushd $FILESYSTEM_ROOT
+initdir=$(pwd)
+cd $FILESYSTEM_ROOT
 sudo mount --bind . .
-popd
+cd $init_dir
 
 ## Build the host debian base system
 echo '[INFO] Build host debian base system...'
@@ -85,16 +94,16 @@ sudo scripts/prepare_debian_image_buildinfo.sh $CONFIGURED_ARCH $IMAGE_DISTRO $F
 sudo chown root:root $FILESYSTEM_ROOT
 
 ## Config hostname and hosts, otherwise 'sudo ...' will complain 'sudo: unable to resolve host ...'
-sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '$HOSTNAME' > /etc/hostname"
-sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '127.0.0.1       $HOSTNAME' >> /etc/hosts"
-sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '127.0.0.1       localhost' >> /etc/hosts"
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c "echo '$HOST_NAME' > /etc/hostname"
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c "echo '127.0.0.1       $HOST_NAME' >> /etc/hosts"
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c "echo '127.0.0.1       localhost' >> /etc/hosts"
 
 ## Config basic fstab
-sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c 'echo "proc /proc proc defaults 0 0" >> /etc/fstab'
-sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c 'echo "sysfs /sys sysfs defaults 0 0" >> /etc/fstab'
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'echo "proc /proc proc defaults 0 0" >> /etc/fstab'
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'echo "sysfs /sys sysfs defaults 0 0" >> /etc/fstab'
 
 ## Setup proxy
-[ -n "$http_proxy" ] && sudo /bin/bash -c "echo 'Acquire::http::Proxy \"$http_proxy\";' > $FILESYSTEM_ROOT/etc/apt/apt.conf.d/01proxy"
+[ -n "$http_proxy" ] && sudo /bin/sh -c "echo 'Acquire::http::Proxy \"$http_proxy\";' > $FILESYSTEM_ROOT/etc/apt/apt.conf.d/01proxy"
 
 trap_push 'sudo LANG=C chroot $FILESYSTEM_ROOT umount /proc || true'
 sudo LANG=C chroot $FILESYSTEM_ROOT mount proc /proc -t proc
@@ -108,20 +117,20 @@ sudo LANG=C chroot $FILESYSTEM_ROOT mount
 
 ## Pointing apt to public apt mirrors and getting latest packages, needed for latest security updates
 sudo cp files/apt/sources.list.$CONFIGURED_ARCH $FILESYSTEM_ROOT/etc/apt/sources.list
-sudo cp files/apt/apt.conf.d/{81norecommends,apt-{clean,gzip-indexes,no-languages},no-check-valid-until} $FILESYSTEM_ROOT/etc/apt/apt.conf.d/
+sudo cp files/apt/apt.conf.d/81norecommends files/apt/apt.conf.d/apt-clean files/apt/apt.conf.d/apt-gzip-indexes files/apt/apt.conf.d/apt-no-languages files/apt/apt.conf.d/no-check-valid-until $FILESYSTEM_ROOT/etc/apt/apt.conf.d/
 
 ## Note: set lang to prevent locale warnings in your chroot
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y update
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y upgrade
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y update'
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y upgrade'
 echo '[INFO] Install packages for building image'
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install makedev psmisc
+pkg_install_in_chroot $FILESYSTEM_ROOT "makedev psmisc"
 
 ## Create device files
 echo '[INFO] MAKEDEV'
-if [[ $CONFIGURED_ARCH == armhf || $CONFIGURED_ARCH == arm64 ]]; then
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c 'cd /dev && MAKEDEV generic-arm'
+if [ "$CONFIGURED_ARCH" = "armhf" ] || [ "$CONFIGURED_ARCH" = "arm64" ]; then
+    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'cd /dev && MAKEDEV generic-arm'
 else
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c 'cd /dev && MAKEDEV generic'
+    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'cd /dev && MAKEDEV generic'
 fi
 ## Install initramfs-tools and linux kernel
 ## Note: initramfs-tools recommends depending on busybox, and we really want busybox for
@@ -129,18 +138,18 @@ fi
 ## 2. mount supports squashfs
 ## However, 'dpkg -i' plus 'apt-get install -f' will ignore the recommended dependency. So
 ## we install busybox explicitly
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install busybox linux-base
+pkg_install_in_chroot $FILESYSTEM_ROOT "busybox linux-base"
 echo '[INFO] Install SONiC linux kernel image'
 ## Note: duplicate apt-get command to ensure every line return zero
 sudo dpkg --root=$FILESYSTEM_ROOT -i $debs_path/initramfs-tools-core_*.deb || \
-    sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install -f
+    sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y install -f'
 sudo dpkg --root=$FILESYSTEM_ROOT -i $debs_path/initramfs-tools_*.deb || \
-    sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install -f
+    sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y install -f'
 sudo dpkg --root=$FILESYSTEM_ROOT -i $debs_path/linux-image-${LINUX_KERNEL_VERSION}-*_${CONFIGURED_ARCH}.deb || \
-    sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install -f
-sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install acl
-if [[ $CONFIGURED_ARCH == amd64 ]]; then
-    sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install dmidecode hdparm
+    sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y install -f'
+pkg_install_in_chroot $FILESYSTEM_ROOT acl
+if [ "$CONFIGURED_ARCH" = "amd64" ]; then
+    pkg_install_in_chroot $FILESYSTEM_ROOT "dmidecode hdparm"
 fi
 
 ## Sign the Linux kernel
@@ -198,8 +207,8 @@ sudo chmod +x $FILESYSTEM_ROOT/etc/initramfs-tools/scripts/init-bottom/varlog
 #sudo chmod +x $FILESYSTEM_ROOT/etc/initramfs-tools/scripts/init-bottom/mgmt-intf-dhcp
 sudo cp files/initramfs-tools/union-fsck $FILESYSTEM_ROOT/etc/initramfs-tools/hooks/union-fsck
 sudo chmod +x $FILESYSTEM_ROOT/etc/initramfs-tools/hooks/union-fsck
-pushd $FILESYSTEM_ROOT/usr/share/initramfs-tools/scripts/init-bottom && sudo patch -p1 < $OLDPWD/files/initramfs-tools/udev.patch; popd
-if [[ $CONFIGURED_ARCH == armhf || $CONFIGURED_ARCH == arm64 ]]; then
+inidir=$(pwd); cd $FILESYSTEM_ROOT/usr/share/initramfs-tools/scripts/init-bottom && sudo patch -p1 < $OLDPWD/files/initramfs-tools/udev.patch; cd $initdir
+if [ "$CONFIGURED_ARCH" = "armhf" ] || [ "$CONFIGURED_ARCH" = "arm64" ]; then
     sudo cp files/initramfs-tools/uboot-utils $FILESYSTEM_ROOT/etc/initramfs-tools/hooks/uboot-utils
     sudo chmod +x $FILESYSTEM_ROOT/etc/initramfs-tools/hooks/uboot-utils
     cat files/initramfs-tools/modules.arm | sudo tee -a $FILESYSTEM_ROOT/etc/initramfs-tools/modules > /dev/null
@@ -210,20 +219,16 @@ if [ -f platform/$CONFIGURED_PLATFORM/modules ]; then
 fi
 
 ## Add mtd and uboot firmware tools package
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install u-boot-tools libubootenv-tool mtd-utils device-tree-compiler
+pkg_install_in_chroot $FILESYSTEM_ROOT "u-boot-tools libubootenv-tool mtd-utils device-tree-compiler"
 
 ## Install docker
 echo '[INFO] Install docker'
 ## Install apparmor utils since they're missing and apparmor is enabled in the kernel
 ## Otherwise Docker will fail to start
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install apparmor
+pkg_install_in_chroot $FILESYSTEM_ROOT apparmor
 sudo cp files/image_config/ntp/ntp-apparmor $FILESYSTEM_ROOT/etc/apparmor.d/local/usr.sbin.ntpd
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install apt-transport-https \
-                                                       ca-certificates \
-                                                       curl \
-                                                       gnupg2 \
-                                                       software-properties-common
-if [[ $CONFIGURED_ARCH == armhf ]]; then
+pkg_install_in_chroot $FILESYSTEM_ROOT "apt-transport-https ca-certificates curl gnupg2 software-properties-common"
+if [ "$CONFIGURED_ARCH" = "armhf" ]; then
     # update ssl ca certificates for secure pem
     sudo https_proxy=$https_proxy LANG=C chroot $FILESYSTEM_ROOT c_rehash
 fi
@@ -232,18 +237,18 @@ sudo LANG=C chroot $FILESYSTEM_ROOT apt-key add /tmp/docker.gpg
 sudo LANG=C chroot $FILESYSTEM_ROOT rm /tmp/docker.gpg
 sudo LANG=C chroot $FILESYSTEM_ROOT add-apt-repository \
                                     "deb [arch=$CONFIGURED_ARCH] https://download.docker.com/linux/debian $IMAGE_DISTRO stable"
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get update
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq update'
 if dpkg --compare-versions ${DOCKER_VERSION} ge "18.09"; then
-    sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install docker-ce=${DOCKER_VERSION} docker-ce-cli=${DOCKER_VERSION}
+    pkg_install_in_chroot $FILESYSTEM_ROOT "docker-ce=${DOCKER_VERSION} docker-ce-cli=${DOCKER_VERSION}"
 else
-    sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install docker-ce=${DOCKER_VERSION}
+    pkg_install_in_chroot $FILESYSTEM_ROOT "docker-ce=${DOCKER_VERSION}"
 fi
 
 # Uninstall 'python3-gi' installed as part of 'software-properties-common' to remove debian version of 'PyGObject'
 # pip version of 'PyGObject' will be installed during installation of 'sonic-host-services'
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y remove software-properties-common gnupg2 python3-gi
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y remove software-properties-common gnupg2 python3-gi'
 
-if [ "$INCLUDE_KUBERNETES" == "y" ]
+if [ "$INCLUDE_KUBERNETES" = "y" ]
 then
     ## Install Kubernetes
     echo '[INFO] Install kubernetes'
@@ -252,19 +257,15 @@ then
         sudo LANG=C chroot $FILESYSTEM_ROOT apt-key add -
     ## Check out the sources list update matches current Debian version
     sudo cp files/image_config/kubernetes/kubernetes.list $FILESYSTEM_ROOT/etc/apt/sources.list.d/
-    sudo LANG=C chroot $FILESYSTEM_ROOT apt-get update
-    sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install kubernetes-cni=${KUBERNETES_CNI_VERSION}-00
-    sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install kubelet=${KUBERNETES_VERSION}-00
-    sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install kubectl=${KUBERNETES_VERSION}-00
-    sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install kubeadm=${KUBERNETES_VERSION}-00
+    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq update'
+    pkg_install_in_chroot $FILESYSTEM_ROOT "kubernetes-cni=${KUBERNETES_CNI_VERSION}-00 kubelet=${KUBERNETES_VERSION}-00 kubectl=${KUBERNETES_VERSION}-00 kubeadm=${KUBERNETES_VERSION}-00"
 else
     echo '[INFO] Skipping Install kubernetes'
 fi
 
 ## Add docker config drop-in to specify dockerd command line
 sudo mkdir -p $FILESYSTEM_ROOT/etc/systemd/system/docker.service.d/
-## Note: $_ means last argument of last command
-sudo cp files/docker/docker.service.conf $_
+sudo cp files/docker/docker.service.conf $FILESYSTEM_ROOT/etc/systemd/system/docker.service.d/
 ## Fix systemd race between docker and containerd
 sudo sed -i '/After=/s/$/ containerd.service/' $FILESYSTEM_ROOT/lib/systemd/system/docker.service
 
@@ -278,10 +279,9 @@ echo "$USERNAME:$PASSWORD" | sudo LANG=C chroot $FILESYSTEM_ROOT chpasswd
 sudo LANG=C chroot $FILESYSTEM_ROOT groupadd -f redis
 sudo LANG=C chroot $FILESYSTEM_ROOT usermod -aG redis $USERNAME
 
-if [[ $CONFIGURED_ARCH == amd64 ]]; then
+if [ "$CONFIGURED_ARCH" = "amd64" ]; then
     ## Pre-install hardware drivers
-    sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y install      \
-        firmware-linux-nonfree
+    pkg_install_in_chroot $FILESYSTEM_ROOT firmware-linux-nonfree
 fi
 
 ## Pre-install the fundamental packages
@@ -290,7 +290,7 @@ fi
 ## Note: ca-certificates is needed for easy_install
 ## Note: don't install python-apt by pip, older than Debian repo one
 ## Note: fdisk and gpg are needed by fwutil
-sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install      \
+pkg_install_in_chroot $FILESYSTEM_ROOT "
     file                    \
     ifmetric                \
     iproute2                \
@@ -345,7 +345,7 @@ sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y in
     fdisk                   \
     gpg                     \
     jq                      \
-    auditd
+    auditd"
 
 # Have systemd create the auditd log directory
 sudo mkdir -p ${FILESYSTEM_ROOT}/etc/systemd/system/auditd.service.d
@@ -355,10 +355,9 @@ LogsDirectory=audit
 LogsDirectoryMode=0750
 EOF
 
-if [[ $CONFIGURED_ARCH == amd64 ]]; then
+if [ "$CONFIGURED_ARCH" = "amd64" ]; then
 ## Pre-install the fundamental packages for amd64 (x86)
-sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install      \
-    rasdaemon
+pkg_install_in_chroot $FILESYSTEM_ROOT rasdaemon
 fi
 
 ## Set /etc/shadow permissions to -rw-------.
@@ -369,8 +368,8 @@ sudo LANG=c chroot $FILESYSTEM_ROOT chmod 644 /etc/passwd
 sudo LANG=c chroot $FILESYSTEM_ROOT chmod 644 /etc/group
 
 # Needed to install kdump-tools
-sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "mkdir -p /etc/initramfs-tools/conf.d"
-sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo 'MODULES=most' >> /etc/initramfs-tools/conf.d/driver-policy"
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c "mkdir -p /etc/initramfs-tools/conf.d"
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c "echo 'MODULES=most' >> /etc/initramfs-tools/conf.d/driver-policy"
 
 # Copy vmcore-sysctl.conf to add more vmcore dump flags to kernel
 sudo cp files/image_config/kdump/vmcore-sysctl.conf $FILESYSTEM_ROOT/etc/sysctl.d/
@@ -379,17 +378,13 @@ sudo cp files/image_config/kdump/vmcore-sysctl.conf $FILESYSTEM_ROOT/etc/sysctl.
 sudo sed -i '/^#.* en_US.* /s/^#//' $FILESYSTEM_ROOT/etc/locale.gen && \
     sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT locale-gen "en_US.UTF-8"
 sudo LANG=en_US.UTF-8 DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT update-locale "LANG=en_US.UTF-8"
-sudo LANG=C chroot $FILESYSTEM_ROOT bash -c "find /usr/share/i18n/locales/ ! -name 'en_US' -type f -exec rm -f {} +"
+sudo LANG=C chroot $FILESYSTEM_ROOT sh -c "find /usr/share/i18n/locales/ ! -name 'en_US' -type f -exec rm -f {} +"
 
-sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install \
-    picocom \
-    systemd \
-    systemd-sysv \
-    ntp
+pkg_install_in_chroot $FILESYSTEM_ROOT "picocom systemd systemd-sysv ntp"
 
-if [[ $CONFIGURED_ARCH == amd64 ]]; then
-    sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y download \
-        grub-pc-bin
+if [ "$CONFIGURED_ARCH" = "amd64" ]; then
+    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y download \
+        grub-pc-bin'
 
     sudo mv $FILESYSTEM_ROOT/grub-pc-bin*.deb $FILESYSTEM_ROOT/$PLATFORM_DIR/x86_64-grub
 fi
@@ -447,7 +442,7 @@ set /files/etc/sysctl.conf/fs.suid_dumpable 2
 
 sysctl_net_cmd_string=""
 while read line; do
-  [[ "$line" =~ ^#.*$ ]] && continue
+  expr match $line "^#.*$" && continue
   sysctl_net_conf_key=`echo $line | awk -F '=' '{print $1}'`
   sysctl_net_conf_value=`echo $line | awk -F '=' '{print $2}'`
   sysctl_net_cmd_string=$sysctl_net_cmd_string"set /files/etc/sysctl.conf/$sysctl_net_conf_key $sysctl_net_conf_value"$'\n'
@@ -457,7 +452,7 @@ sudo augtool --autosave "$sysctl_net_cmd_string" -r $FILESYSTEM_ROOT
 
 # Upgrade pip via PyPI and uninstall the Debian version
 sudo https_proxy=$https_proxy LANG=C chroot $FILESYSTEM_ROOT pip3 install --upgrade pip
-sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get purge -y python3-pip
+sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq purge -y python3-pip'
 
 # For building Python packages
 sudo https_proxy=$https_proxy LANG=C chroot $FILESYSTEM_ROOT pip3 install 'setuptools==49.6.00'
@@ -472,7 +467,7 @@ sudo https_proxy=$https_proxy LANG=C chroot $FILESYSTEM_ROOT pip3 install 'scapy
 ## Note: keep pip installed for maintainance purpose
 
 # Install GCC, needed for building/installing some Python packages
-sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y install gcc
+pkg_install_in_chroot $FILESYSTEM_ROOT gcc
 
 ## Create /var/run/redis folder for docker-database to mount
 sudo mkdir -p $FILESYSTEM_ROOT/var/run/redis
@@ -523,7 +518,7 @@ sudo cp ./files/scripts/core_cleanup.py $FILESYSTEM_ROOT/usr/bin/core_cleanup.py
 ## Copy ASIC config checksum
 sudo chmod 755 files/build_scripts/generate_asic_config_checksum.py
 ./files/build_scripts/generate_asic_config_checksum.py
-if [[ ! -f './asic_config_checksum' ]]; then
+if [ ! -f './asic_config_checksum' ]; then
     echo 'asic_config_checksum not found'
     exit 1
 fi
@@ -537,7 +532,7 @@ fi
 if [ "${enable_organization_extensions}" = "y" ]; then
    if [ -f files/build_templates/organization_extensions.sh ]; then
       sudo chmod 755 files/build_templates/organization_extensions.sh
-      ./files/build_templates/organization_extensions.sh -f $FILESYSTEM_ROOT -h $HOSTNAME
+      ./files/build_templates/organization_extensions.sh -f $FILESYSTEM_ROOT -h $HOST_NAME
    fi
 fi
 
@@ -546,16 +541,16 @@ sudo cp files/image_config/ebtables/ebtables.filter.cfg ${FILESYSTEM_ROOT}/etc
 
 ## Debug Image specific changes
 ## Update motd for debug image
-if [ "$DEBUG_IMG" == "y" ]
+if [ "$DEBUG_IMG" = "y" ]
 then
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '**************' >> /etc/motd"
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo 'Running DEBUG image' >> /etc/motd"
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '**************' >> /etc/motd"
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '/src has the sources' >> /etc/motd"
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '/src is mounted in each docker' >> /etc/motd"
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '/debug is created for core files or temp files' >> /etc/motd"
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo 'Create a subdir under /debug to upload your files' >> /etc/motd"
-    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/bash -c "echo '/debug is mounted in each docker' >> /etc/motd"
+    sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c "echo '**************
+Running DEBUG image
+**************
+/src has the sources
+/src is mounted in each docker
+/debug is created for core files or temp files
+Create a subdir under /debug to upload your files
+/debug is mounted in each docker' >> /etc/motd"
 
     sudo mkdir -p $FILESYSTEM_ROOT/src
     sudo cp $DEBUG_SRC_ARCHIVE_FILE $FILESYSTEM_ROOT/src/
@@ -566,27 +561,27 @@ fi
 ## Update initramfs
 sudo chroot $FILESYSTEM_ROOT update-initramfs -u
 ## Convert initrd image to u-boot format
-if [[ $CONFIGURED_ARCH == armhf || $CONFIGURED_ARCH == arm64 ]]; then
+if [ "$CONFIGURED_ARCH" = "armhf" ] || [ "$CONFIGURED_ARCH" = "arm64" ]; then
     INITRD_FILE=initrd.img-${LINUX_KERNEL_VERSION}-${CONFIGURED_ARCH}
-    if [[ $CONFIGURED_ARCH == armhf ]]; then
+    if [ "$CONFIGURED_ARCH" = "armhf" ]; then
         INITRD_FILE=initrd.img-${LINUX_KERNEL_VERSION}-armmp
         sudo LANG=C chroot $FILESYSTEM_ROOT mkimage -A arm -O linux -T ramdisk -C gzip -d /boot/$INITRD_FILE /boot/u${INITRD_FILE}
         ## Overwriting the initrd image with uInitrd
         sudo LANG=C chroot $FILESYSTEM_ROOT mv /boot/u${INITRD_FILE} /boot/$INITRD_FILE
-    elif [[ $CONFIGURED_ARCH == arm64 ]]; then
+    elif [ "$CONFIGURED_ARCH" = "arm64" ]; then
         sudo cp -v $PLATFORM_DIR/${sonic_asic_platform}-${CONFIGURED_ARCH}/sonic_fit.its $FILESYSTEM_ROOT/boot/
         sudo LANG=C chroot $FILESYSTEM_ROOT mkimage -f /boot/sonic_fit.its /boot/sonic_${CONFIGURED_ARCH}.fit
     fi
 fi
 
 # Remove GCC
-sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT apt-get -y remove gcc
+sudo LANG=C DEBIAN_FRONTEND=noninteractive chroot $FILESYSTEM_ROOT  /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y remove gcc'
 
 ## Clean up apt
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get -y autoremove
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get autoclean
-sudo LANG=C chroot $FILESYSTEM_ROOT apt-get clean
-sudo LANG=C chroot $FILESYSTEM_ROOT bash -c 'rm -rf /usr/share/doc/* /usr/share/locale/* /var/lib/apt/lists/* /tmp/*'
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq -y autoremove'
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq autoclean'
+sudo LANG=C chroot $FILESYSTEM_ROOT /bin/sh -c 'DEBIAN_FRONTEND=noninteractive apt-get -qq clean'
+sudo LANG=C chroot $FILESYSTEM_ROOT sh -c 'rm -rf /usr/share/doc/* /usr/share/locale/* /var/lib/apt/lists/* /tmp/*'
 
 ## Clean up proxy
 [ -n "$http_proxy" ] && sudo rm -f $FILESYSTEM_ROOT/etc/apt/apt.conf.d/01proxy
@@ -622,15 +617,15 @@ fi
 # ALERT: This bit of logic tears down the qemu based build environment used to
 # perform builds for the ARM architecture. This must be the last step in this
 # script before creating the Sonic installer payload zip file.
-if [ $MULTIARCH_QEMU_ENVIRON == y ]; then
+if [ "$MULTIARCH_QEMU_ENVIRON" = "y" ]; then
     # Remove qemu arm bin executable used for cross-building
     sudo rm -f $FILESYSTEM_ROOT/usr/bin/qemu*static || true
     DOCKERFS_PATH=../dockerfs/
 fi
 
 ## Compress docker files
-pushd $FILESYSTEM_ROOT && sudo tar czf $OLDPWD/$FILESYSTEM_DOCKERFS -C ${DOCKERFS_PATH}var/lib/docker .; popd
+initdir=$(pwd); cd $FILESYSTEM_ROOT && sudo tar czf $OLDPWD/$FILESYSTEM_DOCKERFS -C ${DOCKERFS_PATH}var/lib/docker .; cd $initdir
 
 ## Compress together with /boot, /var/lib/docker and $PLATFORM_DIR as an installer payload zip file
-pushd $FILESYSTEM_ROOT && sudo zip $OLDPWD/$ONIE_INSTALLER_PAYLOAD -r boot/ $PLATFORM_DIR/; popd
+initdir=$(pwd); cd $FILESYSTEM_ROOT && sudo zip $OLDPWD/$ONIE_INSTALLER_PAYLOAD -r boot/ $PLATFORM_DIR/; cd $initdir
 sudo zip -g -n .squashfs:.gz $ONIE_INSTALLER_PAYLOAD $FILESYSTEM_SQUASHFS $FILESYSTEM_DOCKERFS

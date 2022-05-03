@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 SLAVE_DIR=$1
 ARCH=$2
@@ -16,7 +16,7 @@ cp -rf $SLAVE_DIR/buildinfo/* /usr/local/share/buildinfo/
 
 # Enable reproducible mirrors
 set_reproducible_mirrors
-apt-get update > /dev/null 2>&1
+DEBIAN_FRONTEND=noninteractive apt-get -qq update > /dev/null 2>&1
 
 # Build the slave version config
 [ -d /usr/local/share/buildinfo/versions ] && rm -rf /usr/local/share/buildinfo/versions
@@ -24,5 +24,5 @@ scripts/versions_manager.py generate -t "/usr/local/share/buildinfo/versions" -n
 touch ${BUILDINFO_PATH}/versions/versions-deb
 
 rm -f /etc/apt/preferences.d/01-versions-deb
-([ "$ENABLE_VERSION_CONTROL_DEB" == "y" ] && [ -f $VERSION_DEB_PREFERENCE ]) && cp -f $VERSION_DEB_PREFERENCE /etc/apt/preferences.d/
+([ "$ENABLE_VERSION_CONTROL_DEB" = "y" ] && [ -f $VERSION_DEB_PREFERENCE ]) && cp -f $VERSION_DEB_PREFERENCE /etc/apt/preferences.d/
 exit 0
