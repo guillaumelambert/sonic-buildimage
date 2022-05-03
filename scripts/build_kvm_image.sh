@@ -49,7 +49,7 @@ prepare_installer_disk()
     umount $tmpdir
 }
 
-apt-get install -y net-tools
+DEBIAN_FRONTEND=noninteractive apt-get -qq -y install net-tools
 create_disk
 prepare_installer_disk
 
@@ -84,7 +84,7 @@ trap on_error ERR
 
 kvm_pid=$!
 
-sleep 2.0
+sleep 2
 
 [ -d "/proc/$kvm_pid" ] || {
         echo "ERROR: kvm died."
