@@ -3,6 +3,8 @@ SHELL = /bin/bash
 .SHELLFLAGS += -e
 
 LIBYANG_URL = https://sonicstorage.blob.core.windows.net/debian/pool/main/liby/libyang
+# debian mirror should be preferred here but requires to modify version in rules.mk
+# cf https://github.com/sonic-net/sonic-buildimage/pull/13381
 
 DSC_FILE = libyang_$(LIBYANG1_FULLVERSION).dsc
 ORIG_FILE = libyang_$(LIBYANG1_VERSION).orig.tar.gz
@@ -20,10 +22,7 @@ $(addprefix $(DEST)/, $(MAIN_TARGET)): $(DEST)/% :
 	rm -fr ./libyang-$(LIBYANG1_VERSION)
 
 	# download debian libyang
-	wget -NO "$(DSC_FILE)" $(DSC_FILE_URL)
-	wget -NO "$(ORIG_FILE)" $(ORIG_FILE_URL)
-	wget -NO "$(DEBIAN_FILE)" $(DEBIAN_FILE_URL)
-	dpkg-source -x libyang_$(LIBYANG1_FULLVERSION).dsc
+	dget $(ORIG_FILE_URL)
 
 	pushd libyang-$(LIBYANG1_VERSION)
 	sed -i 's/set(LIBYANG_MAJOR_SOVERSION 1)/set(LIBYANG_MAJOR_SOVERSION 2)/' CMakeLists.txt

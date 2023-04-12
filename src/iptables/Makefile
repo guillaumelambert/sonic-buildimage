@@ -8,7 +8,7 @@ DERIVED_TARGETS = libip4tc2_$(IPTABLES_VERSION_FULL)_$(CONFIGURED_ARCH).deb \
 		  libiptc0_$(IPTABLES_VERSION_FULL)_$(CONFIGURED_ARCH).deb \
 		  libxtables12_$(IPTABLES_VERSION_FULL)_$(CONFIGURED_ARCH).deb
 
-IPTABLES_URL = http://deb.debian.org/debian/pool/main/i/iptables
+IPTABLES_URL = https://deb.debian.org/debian/pool/main/i/iptables
 
 DSC_FILE = iptables_$(IPTABLES_VERSION_FULL).dsc
 ORIG_FILE = iptables_$(IPTABLES_VERSION).orig.tar.bz2
@@ -23,10 +23,7 @@ $(addprefix $(DEST)/, $(MAIN_TARGET)): $(DEST)/% :
 	rm -rf ./iptables-$(IPTABLES_VERSION)
 
 	# Get iptables release
-	wget -NO "$(DSC_FILE)" $(DSC_FILE_URL)
-	wget -NO "$(ORIG_FILE)" $(ORIG_FILE_URL)
-	wget -NO "$(DEBIAN_FILE)" $(DEBIAN_FILE_URL)
-	dpkg-source -x iptables_$(IPTABLES_VERSION_FULL).dsc
+	dget $(ORIG_FILE_URL)
 
 	pushd iptables-$(IPTABLES_VERSION)
 	git init
